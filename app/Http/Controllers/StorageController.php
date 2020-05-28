@@ -4,8 +4,15 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Lcobucci\JWT\Parser;
+use Lcobucci\JWT\Signer\Key;
+use Lcobucci\JWT\Signer\Rsa\Sha256;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 
+/**
+ * Class StorageController
+ * @package App\Http\Controllers
+ */
 class StorageController
 {
     /**
@@ -34,6 +41,13 @@ class StorageController
      */
     public function upload(Request $request)
     {
+        $token = $request->token();
+        if (!$token) {
+            return $this->uploadError('token_not_given');
+        }
+
+        $this->validateToken((string)$token);
+
         $file = $request->file('userfile');
         if (!($file instanceof UploadedFile)) {
             return $this->uploadError('file_not_given');
@@ -156,5 +170,27 @@ class StorageController
     protected function getMaxFileNameLength()
     {
         return (int)env('MAX_FILE_NAME_LENGTH', 50);
+    }
+
+    /**
+     * @param string $token
+     * @return bool
+     */
+    private function validateToken(string $token): bool
+    {
+        $parser = new Parser();
+        $token = $parser->parse($token);
+
+        $privateKeyFile = config('security.jwt.storage.path');
+
+        if (!is_file($privateKeyFile)) {
+            throw new SignerException(sprintf('Cannot load private key file: "%s"', $privateKeyFile));
+        }
+
+        $privateKey = file_get_contents($privateKeyFile);
+        $privateKeyObject = new Key($privateKey);
+
+        $signer = new Sha256();
+        return $token->verify($signer, $privateKeyObject);
     }
 }
