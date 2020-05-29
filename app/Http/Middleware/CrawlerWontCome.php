@@ -19,7 +19,7 @@ class CrawlerWontCome
         $crawlerDetect = new CrawlerDetect();
 
         if ($crawlerDetect->isCrawler()) {
-            return Response::create('crawler detected', 400);
+            return Response::create('Crawler detected', 400);
         }
 
         return $next($request);

@@ -2,19 +2,25 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Middleware\CheckJwtToken;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Lcobucci\JWT\Parser;
-use Lcobucci\JWT\Signer\Key;
-use Lcobucci\JWT\Signer\Rsa\Sha256;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 /**
  * Class StorageController
  * @package App\Http\Controllers
  */
-class StorageController
+class StorageController extends Controller
 {
+    /**
+     * StorageController constructor
+     */
+    public function __construct()
+    {
+        $this->middleware(CheckJwtToken::class);
+    }
+
     /**
      * @param string $fid
      * @param Request $request
@@ -23,9 +29,8 @@ class StorageController
     public function get($fid, Request $request)
     {
         $fileName = $request->get('filename');
-
-        $directory = $this->getFileDirectory($fid);
-        $fileHash = $this->getFileHash($fid, $fileName);
+        $directory = $this->getFileDirectory($request->domain, $fid);
+        $fileHash = $this->getFileHash($request->domain, $fid, $fileName);
 
         $file = sprintf('%s/%s', $directory, $fileHash);
         if (!file_exists($file)) {
@@ -41,13 +46,6 @@ class StorageController
      */
     public function upload(Request $request)
     {
-        $token = $request->token();
-        if (!$token) {
-            return $this->uploadError('token_not_given');
-        }
-
-        $this->validateToken((string)$token);
-
         $file = $request->file('userfile');
         if (!($file instanceof UploadedFile)) {
             return $this->uploadError('file_not_given');
@@ -55,18 +53,18 @@ class StorageController
 
         $fileName = $file->getClientOriginalName();
         $fileName = $this->cutFileName($fileName);
-        $fileHash = md5(sprintf('%s--%s--%s', 'test', time(), $fileName));
+        $fileHash = md5(sprintf('%s--%s--%s', $request->domain, time(), $fileName));
 
-        $uploadPath = $this->getFileDirectory('test', $fileHash);
+        $uploadPath = $this->getFileDirectory($request->domain, $fileHash);
         if (!file_exists($uploadPath)) {
             mkdir($uploadPath, 0777, true);
         }
 
-        $file->move($uploadPath, $this->getFileHash('test', $fileHash, $fileName));
+        $file->move($uploadPath, $this->getFileHash($request->domain, $fileHash, $fileName));
 
         $url = sprintf(
             '%s/storage/%s?filename=%s',
-            $request->getSchemeAndHttpHost(), $fileHash, urlencode($fileName), 'test'
+            $request->getSchemeAndHttpHost(), $fileHash, urlencode($fileName)
         );
 
         return JsonResponse::create([
@@ -86,8 +84,8 @@ class StorageController
     public function remove($fid, Request $request)
     {
         $fileName = $request->get('filename');
-        $directory = $this->getFileDirectory($fid);
-        $fileHash = $this->getFileHash($fid, $fileName);
+        $directory = $this->getFileDirectory($request->domain, $fid);
+        $fileHash = $this->getFileHash($request->domain, $fid, $fileName);
 
         $file = sprintf('%s/%s', $directory, $fileHash);
         if (!file_exists($file)) {
@@ -123,19 +121,19 @@ class StorageController
      * @param string $fileName
      * @return string
      */
-    protected function getFileHash($fid, $fileName)
+    protected function getFileHash($domain, $fid, $fileName)
     {
         $fileName = urldecode(htmlspecialchars_decode($fileName));
-        return md5(sprintf('%s--%s', $fid, $fileName));
+        return md5(sprintf('%s--%s--%s', $domain, $fid, $fileName));
     }
 
     /**
      * @param string $fid
      * @return string
      */
-    protected function getFileDirectory($fid)
+    protected function getFileDirectory($domain, $fid)
     {
-        return base_path(sprintf('data/%s/%s/', $fid[0], $fid[1]));
+        return base_path(sprintf('data/%s/%s/%s/', $domain, $fid[0], $fid[1]));
     }
 
     /**
@@ -170,27 +168,5 @@ class StorageController
     protected function getMaxFileNameLength()
     {
         return (int)env('MAX_FILE_NAME_LENGTH', 50);
-    }
-
-    /**
-     * @param string $token
-     * @return bool
-     */
-    private function validateToken(string $token): bool
-    {
-        $parser = new Parser();
-        $token = $parser->parse($token);
-
-        $privateKeyFile = config('security.jwt.storage.path');
-
-        if (!is_file($privateKeyFile)) {
-            throw new SignerException(sprintf('Cannot load private key file: "%s"', $privateKeyFile));
-        }
-
-        $privateKey = file_get_contents($privateKeyFile);
-        $privateKeyObject = new Key($privateKey);
-
-        $signer = new Sha256();
-        return $token->verify($signer, $privateKeyObject);
     }
 }
